@@ -2,6 +2,10 @@ import os
 import base64
 import streamlit as st
 from PyPDF2 import PdfReader
+from test import tester
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ======================================================
 # PAGE CONFIG
@@ -19,6 +23,30 @@ def query_llm(prompt):
     if "connection success" in prompt.lower():
         return "Connection success"
     return {"resources": [], "assumptions": []}
+# def query_llm(prompt):
+#     return {
+#         "gdrive_link": "https://drive.google.com"
+#     }
+
+# ======================================================
+# BACKEND STATE INITIALIZATION
+# ======================================================
+if "data_migration_store" not in st.session_state:
+    st.session_state.data_migration_store = {}
+
+if "ml_store" not in st.session_state:
+    st.session_state.ml_store = {}
+
+if "reporting_store" not in st.session_state:
+    st.session_state.reporting_store = {}
+
+if "final_prompt" not in st.session_state:
+    st.session_state.final_prompt = ""
+
+
+if "gdrive_link" not in st.session_state:
+    st.session_state.gdrive_link = None
+
 
 # ======================================================
 # LOAD CSS
@@ -37,8 +65,7 @@ def get_base64_image(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
-LOGO_PATH = "./assets/sigmoid-logo.jpeg"
-logo_base64 = get_base64_image(LOGO_PATH)
+logo_base64 = get_base64_image("./assets/sigmoid-logo.jpeg")
 
 st.markdown(
     f"""
@@ -69,15 +96,54 @@ st.markdown("---")
 # SIDEBAR
 # ======================================================
 with st.sidebar:
-    st.header("⚙️ User Input")
+    st.header("User Input")
 
-    client_name = st.text_input("Client Name", placeholder="Acme Corp")
-    use_case_name = st.text_input("Use Case Name", placeholder="Annual Budget Planning")
+    client_name = st.text_input(
+        "Client Name",
+        placeholder="Acme Corp"
+    )
+
+    use_case_name = st.text_input(
+        "Use Case Name",
+        placeholder="Annual Budget Planning"
+    )
+
+    # =========================
+    # BUDGET
+    # =========================
+    st.subheader("Budget")
+
+    annual_budget = st.number_input(
+        "Annual Cloud Budget (USD)",
+        min_value=0,
+        value=0,
+        step=10000
+    )
+
+
+    # =========================
+    # MARKET CONFIG
+    # =========================
+    st.subheader("Market Configuration")
+    number_of_markets = st.number_input("Number of Markets", min_value=0, value=0)
+
+    markets = []
+    for i in range(int(number_of_markets)):
+        markets.append({
+            "market": f"M{i+1}",
+            "multiplier": st.number_input(
+                f"Consumption Multiplier (M{i+1})",
+                min_value=0.0, value=0.0, step=0.1, key=f"m_mult_{i}"
+            ),
+            "start_month": st.selectbox(
+                f"Market Entry Month (M{i+1})",
+                list(range(1, 13)), key=f"m_month_{i}"
+            )
+        })
 
     use_case_type = st.selectbox(
         "Use Case Type",
-        ["Select use case", "Data Migration", "Machine Learning", "Reporting"],
-        key="use_case_type"
+        ["Select use case", "Data Migration", "Machine Learning", "Reporting"]
     )
 
     cloud_options = ["Databricks", "AWS", "Azure"]
@@ -85,276 +151,236 @@ with st.sidebar:
     # =========================
     # DATA MIGRATION
     # =========================
-    data_migration_inputs = {}
-
     if use_case_type == "Data Migration":
-        st.subheader("📦 Data Migration Inputs")
+        dm = st.session_state.data_migration_store
+        st.subheader("Data Migration Inputs")
 
-        cloud_type_dm = st.multiselect(
-            "Cloud Type",
-            cloud_options,
-            key="cloud_type_data_migration"
-        )
+        dm["cloud_type"] = st.multiselect("Cloud Type", cloud_options, default=[])
 
-        migration_type = st.radio(
+        dm["migration_type"] = st.radio(
             "Migration Type",
-            ["One-time Historical Load", "Ongoing Incremental", "Both"],
-            key="migration_type"
+            ["One-time Historical Load", "Ongoing Incremental", "Both"]
         )
 
-        pipeline_mode = st.radio(
-            "Pipeline Mode",
-            ["Batch", "Streaming"],
-            key="pipeline_mode"
+        dm["pipeline_mode"] = st.radio(
+            "Pipeline Mode", ["Batch", "Streaming"]
         )
 
-        historical_data_gb = st.number_input(
-            "Historical Data Size (GB)", 1, 500000, 1000, key="hist_gb"
+        dm["historical_data_gb"] = st.number_input(
+            "Historical Data Size (GB)", min_value=0, value=0
         )
-        daily_incremental_gb = st.number_input(
-            "Daily Incremental Data (GB/day)", 0, 100000, 100, key="daily_gb"
+        dm["daily_incremental_gb"] = st.number_input(
+            "Daily Incremental Data (GB/day)", min_value=0, value=0
         )
-
-        pipelines_count = st.number_input(
-            "Number of Pipelines", 1, 500, 5, key="pipelines_count"
+        dm["pipelines"] = st.number_input(
+            "Number of Pipelines", min_value=0, value=0
         )
-        pipeline_runs_per_day = st.number_input(
-            "Pipeline Runs per Day", 1, 48, 1, key="runs_per_day"
+        dm["runs_per_day"] = st.number_input(
+            "Pipeline Runs per Day", min_value=0, value=0
         )
-        avg_runtime_hours = st.number_input(
-            "Avg Runtime per Pipeline (hours)", 0.1, 24.0, 2.0, step=0.1, key="runtime"
+        dm["avg_runtime_hours"] = st.number_input(
+            "Avg Runtime per Pipeline (hours)", min_value=0.0, value=0.0
         )
-
-        source_systems = st.number_input(
-            "Source Systems", 1, 100, 2, key="source_systems"
+        dm["source_systems"] = st.number_input(
+            "Source Systems", min_value=0, value=0
         )
-        destination_systems = st.number_input(
-            "Destination Systems", 1, 20, 1, key="destination_systems"
+        dm["destination_systems"] = st.number_input(
+            "Destination Systems", min_value=0, value=0
         )
-
-        transformation_complexity = st.selectbox(
+        dm["transformation_complexity"] = st.selectbox(
             "Transformation Complexity",
-            ["Low (Copy)", "Medium (Joins)", "High (Aggregations / Enrichment)"],
-            key="transform_complexity"
+            ["Low (Copy)", "Medium (Joins)", "High (Aggregations / Enrichment)"]
         )
-
-        concurrent_pipelines = st.number_input(
-            "Max Concurrent Pipelines", 1, 100, 3, key="concurrent_pipelines"
+        dm["concurrent_pipelines"] = st.number_input(
+            "Max Concurrent Pipelines", min_value=0, value=0
         )
-        storage_retention_days = st.number_input(
-            "Raw Data Retention (days)", 1, 3650, 90, key="retention_days"
+        dm["storage_retention_days"] = st.number_input(
+            "Raw Data Retention (days)", min_value=0, value=0
         )
-
-        data_migration_inputs = {
-            "cloud_type": cloud_type_dm,
-            "migration_type": migration_type,
-            "pipeline_mode": pipeline_mode,
-            "historical_data_gb": historical_data_gb,
-            "daily_incremental_gb": daily_incremental_gb,
-            "pipelines": pipelines_count,
-            "runs_per_day": pipeline_runs_per_day,
-            "avg_runtime_hours": avg_runtime_hours,
-            "source_systems": source_systems,
-            "destination_systems": destination_systems,
-            "transformation_complexity": transformation_complexity,
-            "concurrent_pipelines": concurrent_pipelines,
-            "storage_retention_days": storage_retention_days
-        }
 
     # =========================
     # MACHINE LEARNING
     # =========================
-    ml_inputs = {}
-
     if use_case_type == "Machine Learning":
-        st.subheader("🤖 Machine Learning Inputs")
+        ml = st.session_state.ml_store
+        st.subheader("Machine Learning Inputs")
 
-        cloud_type_ml = st.multiselect(
-            "Cloud Type",
-            cloud_options,
-            key="cloud_type_machine_learning"
-        )
+        ml["cloud_type"] = st.multiselect("Cloud Type", cloud_options, default=[])
 
-        workload_types = st.multiselect(
+        ml["workload_types"] = st.multiselect(
             "Workload Type",
             ["Training", "Batch Inference", "Real-time Inference"],
-            key="workload_types"
+            default=[]
         )
 
-        training_data_gb = st.number_input(
-            "Training Data Size (GB)", 1, 500000, 200, key="training_gb"
+        ml["training_data_gb"] = st.number_input(
+            "Training Data Size (GB)", min_value=0, value=0
         )
-        training_frequency = st.selectbox(
+        ml["training_frequency"] = st.selectbox(
             "Training Frequency",
-            ["Daily", "Weekly", "Monthly", "On Demand"],
-            key="training_frequency"
+            ["Daily", "Weekly", "Monthly", "On Demand"]
         )
-        avg_training_hours = st.number_input(
-            "Avg Training Duration (hours)", 0.5, 168.0, 4.0, step=0.5, key="training_hours"
+        ml["avg_training_hours"] = st.number_input(
+            "Avg Training Duration (hours)", min_value=0.0, value=0.0
         )
-
-        models_count = st.number_input(
-            "Number of Models", 1, 200, 3, key="models_count"
+        ml["models_count"] = st.number_input(
+            "Number of Models", min_value=0, value=0
         )
-        inference_requests = st.number_input(
-            "Inference Requests per Day", 0, 10000000, 50000, key="inference_requests"
+        ml["inference_requests_per_day"] = st.number_input(
+            "Inference Requests per Day", min_value=0, value=0
         )
-        concurrency = st.number_input(
-            "Peak Concurrent Inference Requests", 1, 100000, 100, key="ml_concurrency"
+        ml["peak_concurrency"] = st.number_input(
+            "Peak Concurrent Inference Requests", min_value=0, value=0
         )
-
-        use_gpu = st.radio("Use GPU?", ["No", "Yes"], key="use_gpu")
-        gpu_hours = 0
-        if use_gpu == "Yes":
-            gpu_hours = st.number_input(
-                "GPU Usage (hours/day)", 1, 24, 8, key="gpu_hours"
-            )
-
-        model_retention_days = st.number_input(
-            "Model Retention (days)", 1, 3650, 180, key="model_retention"
+        ml["use_gpu"] = st.radio("Use GPU?", ["No", "Yes"])
+        ml["gpu_hours_per_day"] = (
+            st.number_input("GPU Usage (hours/day)", min_value=0, value=0)
+            if ml["use_gpu"] == "Yes" else 0
         )
-
-        ml_inputs = {
-            "cloud_type": cloud_type_ml,
-            "workload_types": workload_types,
-            "training_data_gb": training_data_gb,
-            "training_frequency": training_frequency,
-            "avg_training_hours": avg_training_hours,
-            "models_count": models_count,
-            "inference_requests_per_day": inference_requests,
-            "peak_concurrency": concurrency,
-            "use_gpu": use_gpu,
-            "gpu_hours_per_day": gpu_hours,
-            "model_retention_days": model_retention_days
-        }
+        ml["model_retention_days"] = st.number_input(
+            "Model Retention (days)", min_value=0, value=0
+        )
 
     # =========================
     # REPORTING
     # =========================
-    reporting_inputs = {}
-
     if use_case_type == "Reporting":
-        st.subheader("📊 Reporting Inputs")
+        rp = st.session_state.reporting_store
+        st.subheader("Reporting Inputs")
 
-        cloud_type_reporting = st.multiselect(
-            "Cloud Type",
-            cloud_options,
-            key="cloud_type_reporting"
+        rp["cloud_type"] = st.multiselect("Cloud Type", cloud_options, default=[])
+
+        rp["tool"] = st.selectbox("Reporting Tool", ["Power BI", "Tableau"])
+
+        rp["user_type"] = st.radio("User Type", ["Viewer", "Pro", "Premium"])
+
+        rp["number_of_users"] = st.number_input(
+            "Number of Users", min_value=0, value=0
         )
-
-        reporting_tool = st.selectbox(
-            "Reporting Tool",
-            ["Select", "Power BI", "Tableau"],
-            key="reporting_tool"
-        )
-
-        user_type = None
-        number_of_users = None
-
-        if reporting_tool in ["Power BI", "Tableau"]:
-            user_type = st.radio(
-                "User Type", ["Viewer", "Pro", "Premium"], key="report_user_type"
-            )
-            number_of_users = st.number_input(
-                "Number of Users", 1, 10000, 20, key="report_users"
-            )
-
-        reporting_inputs = {
-            "cloud_type": cloud_type_reporting,
-            "tool": reporting_tool,
-            "user_type": user_type,
-            "number_of_users": number_of_users
-        }
-
-# ======================================================
-# STORE CONFIG
-# ======================================================
-st.session_state.usecase_config = {
-    "client_name": client_name,
-    "use_case_name": use_case_name,
-    "use_case_type": use_case_type,
-    "data_migration": data_migration_inputs,
-    "machine_learning": ml_inputs,
-    "reporting": reporting_inputs
-}
 
 # ======================================================
 # UPLOAD ARTIFACTS
 # ======================================================
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+import os
+import asyncio
+
+
+# Import the CloudinaryImage and CloudinaryVideo methods for the simplified syntax used in this guide
+from cloudinary import CloudinaryImage
+from cloudinary import CloudinaryVideo
+
+print()
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure = True
+)
+
+
+async def upload_image_to_cloudinary_async(file):
+    result = await asyncio.to_thread(
+        cloudinary.uploader.upload,
+        file,
+        resource_type="image"
+    )
+    return result["secure_url"]
+
+
+# # Example usage
+# url, public_id = upload_image_and_get_url("sample.jpg")
+# print("Image URL:", url)
+# print("Public ID:", public_id)
+
+
 st.header("Upload Artifacts")
-st.info("Upload PNG, JPG, JPEG, or PDF files.")
+st.error("Upload PNG, JPG, JPEG, or PDF files.")
 
 uploaded_files = st.file_uploader(
-    "Select files",
-    accept_multiple_files=True,
+    "Select files", accept_multiple_files=True,
     type=["png", "jpg", "jpeg", "pdf"]
 )
 
 extracted_text = ""
-
+image_url = None
 if uploaded_files:
     for file in uploaded_files:
-        if file.name.lower().endswith(("png", "jpg", "jpeg")):
-            st.image(file, caption=file.name, width=400)
-            extracted_text += f"[IMAGE: {file.name}]\n"
-
         if file.name.lower().endswith("pdf"):
             reader = PdfReader(file)
             for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    extracted_text += text + "\n"
+                extracted_text += (page.extract_text() or "") + "\n"
+        else:
+            # extracted_text += f"[IMAGE: {file.name}]\n"
+            image_url = asyncio.run(
+                upload_image_to_cloudinary_async(file)
+            )
 
+            st.image(image_url, width=200)
+            st.success("Image uploaded successfully!")
+
+st.write("Image URL:", image_url)
 # ======================================================
 # AI ANALYSIS
 # ======================================================
 st.header("AI Analysis & Cost Estimation")
 
+if st.button(
+    "Finish Input & Copy to Prompt",
+    type="primary",
+    use_container_width=True
+):
+    st.session_state.final_prompt = f"""
+DATA MIGRATION:
+{st.session_state.data_migration_store}
+
+MACHINE LEARNING:
+{st.session_state.ml_store}
+
+REPORTING:
+{st.session_state.reporting_store}
+""".strip()
+
+
 prompt_input = st.text_area(
     "User Prompt",
+    value=st.session_state.final_prompt or
     "Extract cloud resources and estimate consumption. Output JSON only.",
-    height=140
+    height=260
 )
 
 st.markdown("---")
-
 col1, col2 = st.columns([3, 1])
 
+from test import tester
+
 with col1:
-    if st.button("🚀 Generate Cost Estimate with AI", use_container_width=True, type="primary"):
-        cfg = st.session_state.usecase_config
-
-        final_prompt = f"""
-CLIENT: {cfg['client_name']}
-USE CASE: {cfg['use_case_name']}
-TYPE: {cfg['use_case_type']}
-
-DATA MIGRATION INPUTS:
-{cfg['data_migration']}
-
-MACHINE LEARNING INPUTS:
-{cfg['machine_learning']}
-
-REPORTING INPUTS:
-{cfg['reporting']}
-
-USER INSTRUCTION:
-{prompt_input}
-
-ARCHITECTURE:
-{extracted_text}
-"""
-
+    if st.button("Generate Cost Estimate with AI", type="primary", use_container_width=True):
         with st.spinner("Analyzing and estimating..."):
-            response = query_llm(final_prompt)
+            ai_response = tester(
+                image_url,
+                client_name,
+                use_case_name,
+                markets,
+                prompt_input,
+                annual_budget
+            )
 
-        st.subheader("AI Estimated Output")
-        st.json(response)
+            print(ai_response)
+            st.session_state.gdrive_link = ai_response.get("gdrive_link")
 
 with col2:
-    if st.button("🔌 Test LLM", use_container_width=True):
-        res = query_llm("connection success")
-        if res == "Connection success":
-            st.success("LLM Connected")
-        else:
-            st.error("LLM Connection Failed")
+    if st.button("Test LLM", use_container_width=True):
+        st.success("LLM Connected" if query_llm("connection success") else "LLM Failed")
+
+# ⬇️ ADD THIS IMMEDIATELY AFTER THE ABOVE BLOCK
+if st.session_state.gdrive_link:
+    st.markdown("---")
+    st.link_button(
+        "Open Result in Google Drive",
+        st.session_state.gdrive_link,
+        use_container_width=True
+    )
